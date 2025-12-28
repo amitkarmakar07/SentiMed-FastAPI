@@ -25,6 +25,7 @@ Ask specific questions about hospitals and get detailed comparisons and insights
 *   **Backend**: FastAPI (Python)
 *   **Frontend**: HTML, CSS, JavaScript (Jinja2 Templates)
 *   **AI/ML**: 
+    *   **BERT Finetune**: Custom fine-tuned BERT model for aspect extraction and sentiment analysis.
     *   Sentence Transformers (`all-MiniLM-L6-v2`) for embeddings
     *   Groq API (Llama 3) for LLM inference
     *   In-memory Vector Store for RAG
