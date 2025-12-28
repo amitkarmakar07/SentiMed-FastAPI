@@ -59,17 +59,21 @@ import warnings
 # Suppress huggingface warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# Global RAG variables - Pure in-memory vector store
+# Global RAG variables - ChromaDB
 _embeddings_model = None
 _local_embedding_model = None
-_vector_store = []  # List of {id, text, metadata, embedding}
+_chroma_client = None
+_chroma_collection = None
 _embeddings_cache = {}
 _last_api_call_time = 0  # Rate limiting
 _min_api_interval = 1.0  # Minimum seconds between API calls
 
 # ============================================================================
-# PURE IN-MEMORY RAG IMPLEMENTATION (NO CHROMA DEPENDENCY)
+# CHROMADB RAG IMPLEMENTATION
 # ============================================================================
+
+import chromadb
+from chromadb.config import Settings
 
 def _init_embedding_model():
     """Initialize local embedding model"""
@@ -147,27 +151,12 @@ def get_query_embedding(text: str) -> Optional[np.ndarray]:
     # Local model uses same logic for documents and queries
     return get_embedding(text)
 
-def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
-    """Calculate cosine similarity between two vectors"""
-    try:
-        dot_product = np.dot(vec1, vec2)
-        norm_product = np.linalg.norm(vec1) * np.linalg.norm(vec2)
-        if norm_product == 0:
-            return 0.0
-        return float(dot_product / norm_product)
-    except Exception:
-        return 0.0
-
 def _init_vectorstore():
-    """Initialize in-memory vector store"""
-    global _vector_store
+    """Initialize ChromaDB vector store"""
+    global _chroma_client, _chroma_collection
     
-    print("\n=== Initializing In-Memory Vector Store ===")
+    print("\n=== Initializing ChromaDB Vector Store ===")
     
-    # helper to check dimension
-    def check_dimension(vec):
-        return len(vec) if hasattr(vec, '__len__') else 0
-
     # Initialize local embedding model
     if not _init_embedding_model():
         print("[ERROR] Could not initialize embedding model")
@@ -175,122 +164,37 @@ def _init_vectorstore():
     # Configure Groq (still needed for generation)
     _configure_groq()
     
-    # Load existing vector store if available
-    if os.path.exists(VECTOR_STORE_PATH):
-        try:
-            with open(VECTOR_STORE_PATH, 'rb') as f:
-                loaded_data = pickle.load(f)
-                # Handle different formats
-                if isinstance(loaded_data, list):
-                    temp_store = loaded_data
-                elif isinstance(loaded_data, dict):
-                    # If it's a dict, try to extract the list
-                    temp_store = loaded_data.get('documents', loaded_data.get('vector_store', []))
-                else:
-                    temp_store = []
-            
-            # Check for embedding compatibility (MiniLM is 384 dimensions)
-            # Embedding models are usually 768 or 1024 or 1536. If we switch, we must reset.
-            if temp_store:
-                # Check first valid doc
-                needs_reset = False
-                for doc in temp_store:
-                    if 'embedding' in doc and doc['embedding'] is not None:
-                        emb = doc['embedding']
-                        # MiniLM-L6-v2 is 384 dimensions
-                        dim = len(emb) if hasattr(emb, '__len__') else 0
-                        if dim != 384:
-                            print(f"[WARNING] Detected incompatible embedding dimension {dim} (expected 384). Resetting vector store.")
-                            needs_reset = True
-                        break
-                
-                if needs_reset:
-                    _vector_store = []
-                    # Backup old store just in case
-                    if os.path.exists(VECTOR_STORE_PATH):
-                        try:
-                            # os.rename(VECTOR_STORE_PATH, VECTOR_STORE_PATH + ".bak")
-                            os.remove(VECTOR_STORE_PATH) 
-                            print(f"[INFO] Cleared incompatible vector store")
-                        except:
-                            pass
-                else:
-                    _vector_store = temp_store
-            
-            # Validate loaded data structure
-            valid_docs = []
-            for doc in _vector_store:
-                if isinstance(doc, dict) and 'text' in doc and 'embedding' in doc:
-                    # Ensure embedding is numpy array
-                    if not isinstance(doc['embedding'], np.ndarray):
-                        if isinstance(doc['embedding'], list):
-                            doc['embedding'] = np.array(doc['embedding'], dtype=np.float32)
-                        else:
-                            continue
-                    valid_docs.append(doc)
-                else:
-                    pass # Skip warning for every doc to reduce noise
-            
-            _vector_store = valid_docs
-            print(f"[OK] Loaded {len(_vector_store)} valid documents from disk")
-        except Exception as e:
-            print(f"[WARNING] Could not load vector store: {e}")
-            import traceback
-            traceback.print_exc()
-            _vector_store = []
-    else:
-        _vector_store = []
-        print("[INFO] No existing vector store found, starting fresh")
+    try:
+        # Initialize persistent client
+        db_path = os.path.join(os.getcwd(), "chroma_db")
+        print(f"ChromaDB Path: {db_path}")
+        
+        _chroma_client = chromadb.PersistentClient(path=db_path)
+        
+        # Get or create collection
+        # We manually handle embeddings, so using DefaultEmbeddingFunction is optional/redundant but harmless if we pass embeddings directly
+        _chroma_collection = _chroma_client.get_or_create_collection(
+            name="hospital_reviews",
+            metadata={"hnsw:space": "cosine"}
+        )
+        
+        count = _chroma_collection.count()
+        print(f"[OK] ChromaDB initialized. Collection 'hospital_reviews' has {count} documents.")
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize ChromaDB: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
     
-    print(f"[OK] In-memory vector store initialized with {len(_vector_store)} documents")
     print("=== RAG Initialization Complete ===\n")
     return True
 
-def save_vector_store():
-    """Save vector store to disk"""
-    try:
-        # Convert numpy arrays to lists for better pickle compatibility
-        store_to_save = []
-        for doc in _vector_store:
-            doc_copy = doc.copy()
-            if 'embedding' in doc_copy and isinstance(doc_copy['embedding'], np.ndarray):
-                doc_copy['embedding'] = doc_copy['embedding'].tolist()
-            store_to_save.append(doc_copy)
-        
-        with open(VECTOR_STORE_PATH, 'wb') as f:
-            pickle.dump(store_to_save, f)
-        print(f"[OK] Saved {len(_vector_store)} documents to disk")
-    except Exception as e:
-        print(f"[WARNING] Could not save vector store: {e}")
-        import traceback
-        traceback.print_exc()
-
-def _split_sentences(text: str) -> List[str]:
-    """Split text into sentences"""
-    if not text or not isinstance(text, str):
-        return []
-    
-    # Split on sentence boundaries
-    parts = re.split(r'(?<=[.!?])\s+|\n+', text.strip())
-    
-    # Filter sentences by length
-    sentences = []
-    for s in parts:
-        s = s.strip()
-        if 30 <= len(s) <= 600:
-            sentences.append(s)
-    
-    # If no valid sentences, return original text if not empty
-    if not sentences and text.strip():
-        return [text.strip()]
-    
-    return sentences
-
 def add_documents(texts: List[str], metadatas: List[Dict], batch_size: int = 20):
-    """Add documents to vector store"""
-    global _vector_store
+    """Add documents to ChromaDB vector store"""
+    global _chroma_collection
     
-    if not texts:
+    if not texts or not _chroma_collection:
         return 0
     
     added_count = 0
@@ -299,55 +203,53 @@ def add_documents(texts: List[str], metadatas: List[Dict], batch_size: int = 20)
         batch_texts = texts[i:i+batch_size]
         batch_metas = metadatas[i:i+batch_size]
         
+        batch_ids = []
+        batch_embeddings = []
+        valid_texts = []
+        valid_metas = []
+        
         for text, meta in zip(batch_texts, batch_metas):
             try:
                 # Create unique ID
                 doc_id = hashlib.sha1((str(meta.get('hospital_name', '')) + text).encode()).hexdigest()
                 
-                # Check if already exists
-                if any(doc['id'] == doc_id for doc in _vector_store):
-                    continue
-                
                 # Get embedding
                 embedding = get_embedding(text)
                 
                 if embedding is not None:
-                    # Ensure embedding is numpy array
-                    if not isinstance(embedding, np.ndarray):
-                        embedding = np.array(embedding, dtype=np.float32)
-                    
-                    _vector_store.append({
-                        'id': doc_id,
-                        'text': text,
-                        'metadata': meta,
-                        'embedding': embedding
-                    })
-                    added_count += 1
+                    batch_ids.append(doc_id)
+                    batch_embeddings.append(embedding.tolist())
+                    valid_texts.append(text)
+                    valid_metas.append(meta)
                 else:
                     print(f"[WARNING] Could not get embedding for text: {text[:50]}...")
-                
-                # Small delay to avoid rate limits
-                if added_count % 10 == 0:
-                    time.sleep(0.1)
-                    
+            
             except Exception as e:
-                print(f"Error adding document: {e}")
+                print(f"Error preparing document: {e}")
                 continue
         
+        if valid_texts:
+            try:
+                _chroma_collection.upsert(
+                    ids=batch_ids,
+                    documents=valid_texts,
+                    metadatas=valid_metas,
+                    embeddings=batch_embeddings
+                )
+                added_count += len(valid_texts)
+            except Exception as e:
+                print(f"[ERROR] Failed to add batch to ChromaDB: {e}")
+        
         print(f"[OK] Processed batch {i//batch_size + 1}, added {added_count} documents so far")
-    
-    # Save to disk
-    if added_count > 0:
-        save_vector_store()
     
     return added_count
 
 def search_documents(query: str, k: int = 8, hospital_names: Optional[List[str]] = None):
-    """Search for similar documents"""
-    global _vector_store
+    """Search for similar documents using ChromaDB"""
+    global _chroma_collection
     
-    if not _vector_store:
-        print("[ERROR] Vector store is empty")
+    if not _chroma_collection:
+        print("[ERROR] Chroma collection is not initialized")
         return []
     
     # Get query embedding
@@ -356,49 +258,44 @@ def search_documents(query: str, k: int = 8, hospital_names: Optional[List[str]]
         print("[ERROR] Could not get query embedding")
         return []
     
-    # Calculate similarities
-    similarities = []
-    for doc in _vector_store:
-        try:
-            # Filter by hospital names if provided
-            if hospital_names:
-                doc_hospital = doc.get('metadata', {}).get('hospital_name', '')
-                if doc_hospital not in hospital_names:
-                    continue
+    try:
+        # Build filter
+        where_filter = None
+        if hospital_names:
+            if len(hospital_names) == 1:
+                where_filter = {"hospital_name": hospital_names[0]}
+            else:
+                where_filter = {"hospital_name": {"$in": hospital_names}}
+        
+        # Query ChromaDB
+        results = _chroma_collection.query(
+            query_embeddings=[query_embedding.tolist()],
+            n_results=k,
+            where=where_filter
+        )
+        
+        # Parse results
+        docs = []
+        if results and results['documents']:
+            # results is a dict of lists of lists (one list per query)
+            flat_documents = results['documents'][0]
+            flat_metadatas = results['metadatas'][0]
             
-            # Get embedding
-            doc_embedding = doc.get('embedding')
-            if doc_embedding is None:
-                continue
-            
-            # Ensure embedding is numpy array
-            if not isinstance(doc_embedding, np.ndarray):
-                if isinstance(doc_embedding, list):
-                    doc_embedding = np.array(doc_embedding, dtype=np.float32)
-                else:
-                    continue
-            
-            # Calculate similarity
-            sim = cosine_similarity(query_embedding, doc_embedding)
-            similarities.append((sim, doc))
-        except Exception as e:
-            print(f"[WARNING] Error processing document: {e}")
-            continue
-    
-    # Sort by similarity
-    similarities.sort(key=lambda x: x[0], reverse=True)
-    
-    # Return top k
-    results = []
-    for sim, doc in similarities[:k]:
-        class Result:
-            def __init__(self, text, metadata):
-                self.page_content = text
-                self.metadata = metadata
-        results.append(Result(doc.get('text', ''), doc.get('metadata', {})))
-    
-    print(f"[OK] Found {len(results)} similar documents (from {len(similarities)} candidates)")
-    return results
+            for text, meta in zip(flat_documents, flat_metadatas):
+                class Result:
+                    def __init__(self, text, metadata):
+                        self.page_content = text
+                        self.metadata = metadata
+                docs.append(Result(text, meta))
+        
+        print(f"[OK] Found {len(docs)} similar documents")
+        return docs
+        
+    except Exception as e:
+        print(f"[ERROR] ChromaDB search failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 def index_hospital_reviews(hospitals: List[dict]) -> int:
     """Index hospital reviews into vector store"""
@@ -646,10 +543,14 @@ async def generate_pdf_endpoint(request: PDFRequest):
 @app.get("/api/rag-stats")
 async def rag_stats():
     """Get RAG statistics"""
+    count = 0
+    if _chroma_collection:
+        count = _chroma_collection.count()
+    
     return JSONResponse(content={
-        "count": len(_vector_store),
+        "count": count,
         "cache_size": len(_embeddings_cache),
-        "status": "active" if _vector_store else "empty"
+        "status": "active" if count > 0 else "empty"
     })
 
 @app.post("/api/rag-add-samples")
@@ -676,9 +577,13 @@ async def rag_add_samples():
 @app.get("/api/rag-indexed-count")
 async def rag_indexed_count():
     """Get count of indexed documents"""
+    count = 0
+    if _chroma_collection:
+        count = _chroma_collection.count()
+        
     return JSONResponse(content={
-        "count": len(_vector_store),
-        "system": "in-memory"
+        "count": count,
+        "system": "chromadb"
     })
 
 @app.get("/api/rag-debug")
@@ -698,23 +603,29 @@ async def rag_debug():
         test_error += "\n" + traceback.format_exc()
     
     # Sample document info
+    count = 0
     sample_docs = []
-    for i, doc in enumerate(_vector_store[:3]):
-        sample_docs.append({
-            "id": doc.get('id', 'N/A')[:20] + "...",
-            "text_preview": doc.get('text', '')[:50] + "...",
-            "has_embedding": doc.get('embedding') is not None,
-            "embedding_type": str(type(doc.get('embedding'))) if doc.get('embedding') is not None else None
-        })
+    if _chroma_collection:
+        count = _chroma_collection.count()
+        if count > 0:
+            res = _chroma_collection.peek(limit=3)
+            # res is dict of lists
+            ids = res['ids']
+            docs = res['documents']
+            for i, doc_id in enumerate(ids):
+                sample_docs.append({
+                    "id": doc_id,
+                    "text_preview": docs[i][:50] + "...",
+                    "has_embedding": True
+                })
     
     return JSONResponse(content={
-        "system": "in-memory",
-        "document_count": len(_vector_store),
+        "system": "chromadb",
+        "document_count": count,
         "cache_size": len(_embeddings_cache),
         "groq_configured": bool(GROQ_API_KEY),
         "groq_key_present": bool(GROQ_API_KEY),
-        "vector_store_path": VECTOR_STORE_PATH,
-        "file_exists": os.path.exists(VECTOR_STORE_PATH),
+        "chroma_db_path": os.path.join(os.getcwd(), "chroma_db"),
         "test_embedding": test_embedding,
         "test_error": test_error,
         "sample_documents": sample_docs
@@ -723,21 +634,29 @@ async def rag_debug():
 @app.post("/api/rag-reset")
 async def rag_reset():
     """Reset and reinitialize the RAG system"""
-    global _vector_store, _embeddings_cache
+    global _chroma_client, _chroma_collection
     
     try:
         print("\n=== Resetting RAG System ===")
         
-        # Clear in-memory data
-        _vector_store = []
+        if _chroma_client:
+            try:
+                _chroma_client.delete_collection("hospital_reviews")
+                print("[OK] Deleted collection")
+            except Exception as e:
+                print(f"[WARNING] Could not delete collection: {e}")
+            
+            # Recreate
+            try:
+                _chroma_collection = _chroma_client.get_or_create_collection(
+                    name="hospital_reviews",
+                    metadata={"hnsw:space": "cosine"}
+                )
+                print("[OK] Recreated collection")
+            except Exception as e:
+                print(f"[ERROR] Could not recreate collection: {e}")
+        
         _embeddings_cache = {}
-        
-        # Remove saved file
-        if os.path.exists(VECTOR_STORE_PATH):
-            os.remove(VECTOR_STORE_PATH)
-            print("[OK] Removed saved vector store")
-        
-        print("[OK] RAG system reset complete")
         
         return JSONResponse(content={
             "success": True,
