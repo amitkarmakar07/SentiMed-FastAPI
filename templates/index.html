@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🏥 SentiMed : Aspect-Based Hospital Review Analyzer</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏥 SentiMed</h1>
+            <p class="subtitle">Aspect-Based Hospital Review Analyzer</p>
+            <div class="top-nav">
+                <button class="menu-item active" data-mode="location">📍 Location-Based Search</button>
+                <button class="menu-item" data-mode="csv">📄 Upload CSV Feedback</button>
+            </div>
+        </header>
+
+        <main class="content">
+            <div id="location-mode" class="mode-content active">
+                <h2>📍 Location Input</h2>
+                <div class="input-group">
+                    <label>
+                        <input type="checkbox" id="use-auto-location"> Use my current location (auto-detect)
+                    </label>
+                    <button id="locate-btn" class="btn-primary" style="margin-left: 10px;">Locate My Address</button>
+                </div>
+                <div class="input-group">
+                    <input type="text" id="location-input" placeholder="Enter your location">
+                    <button id="search-location-btn" class="btn-primary">Search</button>
+                </div>
+                <div id="location-status" class="status-message"></div>
+                <div id="map-container" style="display: none;">
+                    <div id="map" style="height: 400px; width: 100%; margin: 20px 0;"></div>
+                </div>
+                <div id="hospitals-list"></div>
+                <div id="recommended-hospitals" style="display: none;">
+                    <h3>🏥 Recommended Hospitals</h3>
+                    <div id="recommended-list"></div>
+                </div>
+                <div id="sentbot-panel" style="display: none;">
+                    <h3>🤖 Ask SentBot</h3>
+                    <div class="input-group">
+                        <input type="text" id="sentbot-input" placeholder="Ask about these hospitals (e.g., compare cleanliness)">
+                        <button id="sentbot-ask-btn" class="btn-primary">Ask</button>
+                    </div>
+                    <div id="sentbot-answer" class="status-message" style="display: none;"></div>
+                </div>
+            </div>
+
+            <div id="csv-mode" class="mode-content">
+                <h2>Upload Feedback CSV (with 'review' column)</h2>
+                <div class="input-group">
+                    <input type="file" id="csv-file" accept=".csv">
+                    <button id="analyze-csv-btn" class="btn-primary">Analyze</button>
+                </div>
+                <div id="csv-results" style="display: none;">
+                    <div class="chart-container">
+                        <h3>📊 Sentiment Distribution by Aspect</h3>
+                        <canvas id="bar-chart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>🥧 Aspect Frequency Pie Chart</h3>
+                        <canvas id="pie-chart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>WordCloud of Reviews</h3>
+                        <img id="wordcloud-img" style="max-width: 100%;">
+                    </div>
+                    <div class="input-group">
+                        <button id="download-pdf-btn" class="btn-primary">📄 Download PDF Report</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    {% if api_key and api_key != 'None' %}
+    <script src="https://maps.googleapis.com/maps/api/js?key={{ api_key }}&libraries=places"></script>
+    {% endif %}
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="/static/script.js"></script>
+</body>
+</html>
+

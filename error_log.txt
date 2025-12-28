@@ -1,0 +1,2 @@
+{"answer":"I don't have enough information to answer that question. 
+Please analyze some hospitals or upload CSV data first to populate the knowledge base.","sources":[]}

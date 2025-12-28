@@ -1,0 +1,5 @@
+models/multitask_bert_model.pth
+__pycache__/
+.ipynb_checkpoints/
+.env
+venv/
