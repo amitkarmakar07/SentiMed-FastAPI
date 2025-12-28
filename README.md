@@ -55,6 +55,29 @@ Ask specific questions about hospitals and get detailed comparisons and insights
     ```
     Access the app at `http://localhost:8000`.
 
+## Deployment to Render (Free Tier)
+
+This application is ready to be deployed on Render for free.
+
+1.  **Sign up/Login to Render**: Go to [render.com](https://render.com).
+2.  **New Web Service**: Click "New +" and select "Web Service".
+3.  **Connect GitHub**: Select "Build and deploy from a Git repository" and connect your GitHub account.
+4.  **Select Repository**: Choose `SentiMed-FastAPI`.
+5.  **Configure**:
+    *   **Name**: `sentimed-app` (or any name you like)
+    *   **Region**: Closest to you (e.g., Singapore, Frankfurt)
+    *   **Branch**: `main`
+    *   **Runtime**: `Python 3`
+    *   **Build Command**: `pip install -r requirements.txt`
+    *   **Start Command**: `gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker`
+6.  **Environment Variables**:
+    Scroll down to "Advanced" -> "Environment Variables" and add:
+    *   `GOOGLE_MAPS_API_KEY`: *[Your Google Maps API Key]*
+    *   `GROQ_API_KEY`: *[Your Groq API Key]*
+7.  **Create Web Service**: Click the button to deploy.
+
+*Note: The free tier has 512MB RAM. The `all-MiniLM-L6-v2` embedding model is optimized to fit within this limit, but heavy usage might trigger restarts.*
+
 ## License
 
 MIT
