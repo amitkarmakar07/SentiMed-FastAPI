@@ -67,9 +67,6 @@ _embeddings_cache = {}
 _last_api_call_time = 0  # Rate limiting
 _min_api_interval = 1.0  # Minimum seconds between API calls
 
-# ============================================================================
-# PURE IN-MEMORY RAG IMPLEMENTATION (NO CHROMA DEPENDENCY)
-# ============================================================================
 
 def _init_embedding_model():
     """Initialize local embedding model"""
@@ -491,9 +488,7 @@ def index_csv_reviews(reviews: List[str]) -> int:
     print(f"[OK] Successfully indexed {added} CSV documents")
     return added
 
-# ============================================================================
-# PYDANTIC MODELS
-# ============================================================================
+
 
 class LocationRequest(BaseModel):
     location: Optional[str] = None
@@ -512,9 +507,7 @@ class SentBotRequest(BaseModel):
     question: str
     hospital_names: Optional[List[str]] = None
 
-# ============================================================================
-# API ENDPOINTS
-# ============================================================================
+
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -639,9 +632,7 @@ async def generate_pdf_endpoint(request: PDFRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ============================================================================
-# RAG / SENTBOT ENDPOINTS
-# ============================================================================
+
 
 @app.get("/api/rag-stats")
 async def rag_stats():
@@ -848,9 +839,7 @@ Answer:"""
             
         
         if not answer_text:
-            # =========================================================================
-            # FALLBACK MODE (MANUAL ANSWER)
-            # =========================================================================
+           
             print("[INFO] Using Fallback Mode (No API)")
             
             top_doc = docs[0]
@@ -893,9 +882,6 @@ Answer:"""
             "sources": []
         })
 
-# ============================================================================
-# STARTUP
-# ============================================================================
 
 @app.on_event("startup")
 async def startup_event():
